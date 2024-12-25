@@ -1,0 +1,271 @@
+<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://code.jquery.com https://unpkg.com https://d3js.org https://threejs.org https://cdn.plot.ly https://stackpath.bootstrapcdn.com https://maps.googleapis.com https://cdn.tailwindcss.com https://ajax.googleapis.com https://kit.fontawesome.com https://cdn.datatables.net https://maxcdn.bootstrapcdn.com https://code.highcharts.com https://tako-static-assets-production.s3.amazonaws.com https://www.youtube.com https://fonts.googleapis.com https://fonts.gstatic.com https://pfst.cf2.poecdn.net https://puc.poecdn.net https://i.imgur.com https://wikimedia.org https://*.icons8.com https://*.giphy.com https://picsum.photos https://images.unsplash.com; frame-src 'self' https://www.youtube.com https://trytako.com; child-src 'self'; manifest-src 'self'; worker-src 'self'; upgrade-insecure-requests; block-all-mixed-content;">
+    <meta charset="utf-8">
+    <title>3D Coin Visualization</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+        #container { 
+            width: 100%;
+            height: 100vh;
+            position: relative;
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: Arial, sans-serif;
+        }
+        #imageUpload {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="imageUpload">
+        <div>
+            Аверс: <input type="file" id="frontImage" accept="image/*"><br>
+            Реверс: <input type="file" id="backImage" accept="image/*">
+        </div>
+    </div>
+    <div id="container">
+        <div class="loading">Загрузка изображения...</div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let scene, camera, renderer, coin;
+        let frontTexture, backTexture;
+        let isDragging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        let rotationSpeed = { x: 0, y: 0 };
+        let autoRotate = true;
+
+        const GOLD_COLOR = 0xFFD700; // Более насыщенный золотой цвет
+
+        function loadImageAsTexture(file, side) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = new Image();
+                    img.onload = function() {
+                        const texture = new THREE.Texture(img);
+                        texture.needsUpdate = true;
+                        if (side === 'front') {
+                            frontTexture = texture;
+                        } else {
+                            backTexture = texture;
+                        }
+                        updateCoinTextures();
+                        resolve();
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function updateCoinTextures() {
+            if (!coin) return;
+
+            const materials = [];
+            
+            // Боковая поверхность - простой золотой материал
+            materials.push(new THREE.MeshBasicMaterial({ 
+                color: GOLD_COLOR
+            }));
+
+            // Передняя сторона
+            if (frontTexture) {
+                materials.push(new THREE.MeshBasicMaterial({ 
+                    map: frontTexture
+                }));
+            } else {
+                materials.push(new THREE.MeshBasicMaterial({ 
+                    color: GOLD_COLOR
+                }));
+            }
+
+            // Задняя сторона
+            if (backTexture) {
+                materials.push(new THREE.MeshBasicMaterial({ 
+                    map: backTexture
+                }));
+            } else {
+                materials.push(new THREE.MeshBasicMaterial({ 
+                    color: GOLD_COLOR
+                }));
+            }
+
+            coin.material = materials;
+        }
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = null;
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true,
+                alpha: true
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0x000000, 0);
+
+            document.getElementById('container').appendChild(renderer.domElement);
+
+            const geometry = new THREE.CylinderGeometry(2, 2, 0.2, 32);
+            
+            // Начальные материалы - простой золотой цвет
+            const materials = [
+                new THREE.MeshBasicMaterial({ color: GOLD_COLOR }),
+                new THREE.MeshBasicMaterial({ color: GOLD_COLOR }),
+                new THREE.MeshBasicMaterial({ color: GOLD_COLOR })
+            ];
+
+            coin = new THREE.Mesh(geometry, materials);
+            scene.add(coin);
+
+            // Добавляем ambient light для базового освещения
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1);
+            scene.add(ambientLight);
+
+            document.querySelector('.loading').style.display = 'none';
+
+            // Обработчики событий для вращения
+            renderer.domElement.addEventListener('mousedown', onMouseDown);
+            renderer.domElement.addEventListener('mousemove', onMouseMove);
+            renderer.domElement.addEventListener('mouseup', onMouseUp);
+            renderer.domElement.addEventListener('touchstart', onTouchStart);
+            renderer.domElement.addEventListener('touchmove', onTouchMove);
+            renderer.domElement.addEventListener('touchend', onTouchEnd);
+
+            document.getElementById('frontImage').addEventListener('change', function(e) {
+                if (e.target.files[0]) {
+                    loadImageAsTexture(e.target.files[0], 'front');
+                }
+            });
+
+            document.getElementById('backImage').addEventListener('change', function(e) {
+                if (e.target.files[0]) {
+                    loadImageAsTexture(e.target.files[0], 'back');
+                }
+            });
+
+            animate();
+        }
+
+        function onMouseDown(event) {
+            isDragging = true;
+            autoRotate = false;
+            previousMousePosition = {
+                x: event.clientX,
+                y: event.clientY
+            };
+        }
+
+        function onMouseMove(event) {
+            if (!isDragging) return;
+
+            const deltaMove = {
+                x: event.clientX - previousMousePosition.x,
+                y: event.clientY - previousMousePosition.y
+            };
+
+            rotationSpeed.x = deltaMove.y * 0.005;
+            rotationSpeed.y = deltaMove.x * 0.005;
+
+            coin.rotation.x += rotationSpeed.x;
+            coin.rotation.y += rotationSpeed.y;
+
+            previousMousePosition = {
+                x: event.clientX,
+                y: event.clientY
+            };
+        }
+
+        function onMouseUp() {
+            isDragging = false;
+            setTimeout(() => {
+                autoRotate = true;
+            }, 2000);
+        }
+
+        function onTouchStart(event) {
+            if (event.touches.length === 1) {
+                event.preventDefault();
+                isDragging = true;
+                autoRotate = false;
+                previousMousePosition = {
+                    x: event.touches[0].clientX,
+                    y: event.touches[0].clientY
+                };
+            }
+        }
+
+        function onTouchMove(event) {
+            if (event.touches.length === 1) {
+                event.preventDefault();
+                if (!isDragging) return;
+
+                const deltaMove = {
+                    x: event.touches[0].clientX - previousMousePosition.x,
+                    y: event.touches[0].clientY - previousMousePosition.y
+                };
+
+                rotationSpeed.x = deltaMove.y * 0.005;
+                rotationSpeed.y = deltaMove.x * 0.005;
+
+                coin.rotation.x += rotationSpeed.x;
+                coin.rotation.y += rotationSpeed.y;
+
+                previousMousePosition = {
+                    x: event.touches[0].clientX,
+                    y: event.touches[0].clientY
+                };
+            }
+        }
+
+        function onTouchEnd() {
+            isDragging = false;
+            setTimeout(() => {
+                autoRotate = true;
+            }, 2000);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (autoRotate) {
+                coin.rotation.y += 0.01;
+            } else {
+                rotationSpeed.x *= 0.95;
+                rotationSpeed.y *= 0.95;
+                coin.rotation.x += rotationSpeed.x;
+                coin.rotation.y += rotationSpeed.y;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', onWindowResize, false);
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        init();
+    </script>
+
+
+</body></html>
